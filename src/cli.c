@@ -24,7 +24,7 @@
 #include <string.h>
 
 void print_usage() {
-    printf("BUDC Command Line Interface\n");
+    printf("BUDC Command Line Interface by Penthertz\n");
     printf("Usage:\n");
     printf("  budc_cli --list                           List available serial ports\n");
     printf("  budc_cli --port <name> [COMMANDS]\n\n");
