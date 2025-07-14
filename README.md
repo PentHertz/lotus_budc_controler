@@ -140,6 +140,8 @@ Output:
 
 ### GUI (`budc_gui`)
 
+![BUDC GUI Screenshot](.res/lotusgui.png)
+
 The GUI launches directly into an interactive window built with Dear ImGui:
 
 ```bash
