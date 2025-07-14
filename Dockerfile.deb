@@ -1,0 +1,47 @@
+FROM ubuntu:24.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    pkg-config \
+    libserialport-dev \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libx11-dev \
+    libxrandr-dev \
+    libxinerama-dev \
+    libxcursor-dev \
+    libxi-dev \
+    libxext-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source code
+COPY . /workspace
+WORKDIR /workspace
+
+# Create build directory
+RUN mkdir build
+
+# Configure with CMake
+WORKDIR /workspace/build
+RUN cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release
+
+# Build the project
+RUN ninja
+
+# Create the .deb package
+RUN cpack -G DEB
+
+# Copy output to a known location
+RUN mkdir -p /output && cp *.deb /output/
+
+# Final stage - just the .deb file
+FROM scratch AS output
+COPY --from=0 /output/ /
