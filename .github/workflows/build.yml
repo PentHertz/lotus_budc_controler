@@ -1,0 +1,284 @@
+name: Cross-Platform Build
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  docker-builds:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build cross-platform binaries
+      run: |
+        # Build and extract the output directly
+        docker build --target output --output type=local,dest=./builds .
+        
+        # Verify the build results
+        echo "Build results:"
+        find ./builds -type f -ls || echo "No files found in builds directory"
+    
+    - name: Verify build outputs
+      run: |
+        echo "=== Checking build outputs ==="
+        if [ -d "./builds" ]; then
+          echo "Contents of builds directory:"
+          ls -la ./builds/
+          
+          # Check each platform directory
+          for dir in linux-x64 windows-x64 macos-x64; do
+            if [ -d "./builds/$dir" ]; then
+              echo "Contents of $dir:"
+              ls -la "./builds/$dir/"
+            else
+              echo "Warning: $dir directory not found"
+            fi
+          done
+        else
+          echo "Error: builds directory not found"
+          exit 1
+        fi
+    
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: linux-x64
+        path: builds/linux-x64/
+        retention-days: 30
+    
+    - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: windows-x64
+        path: builds/windows-x64/
+        retention-days: 30
+    
+    - name: Upload macOS artifacts (placeholder)
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: macos-x64-placeholder
+        path: builds/macos-x64/
+        retention-days: 30
+
+  macos-build:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install cmake ninja pkg-config libserialport
+    
+    - name: Debug libserialport installation
+      run: |
+        echo "=== Homebrew prefix ==="
+        brew --prefix
+        
+        echo "=== libserialport files ==="
+        find $(brew --prefix) -name "*serialport*" -type f 2>/dev/null || echo "No serialport files found"
+        
+        echo "=== pkg-config test ==="
+        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+        pkg-config --exists libserialport && echo "pkg-config found libserialport" || echo "pkg-config did NOT find libserialport"
+        pkg-config --cflags --libs libserialport || echo "Failed to get libserialport flags"
+        pkg-config --variable=libdir libserialport || echo "Failed to get libdir"
+        
+        echo "=== Direct library search ==="
+        ls -la $(brew --prefix)/lib/*serial* || echo "No serialport libs in standard location"
+        
+        echo "=== CMake will use these paths ==="
+        echo "CMAKE_PREFIX_PATH: $(brew --prefix)"
+        echo "PKG_CONFIG_PATH: $(brew --prefix)/lib/pkgconfig"
+    
+    - name: Configure CMake (CLI only)
+      run: |
+        mkdir build-cli
+        cd build-cli
+        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+        
+        # Try with pkg-config first
+        if pkg-config --exists libserialport; then
+          echo "Using pkg-config for libserialport"
+          cmake .. -GNinja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DBUILD_CLI_ONLY=ON \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_VERBOSE_MAKEFILE=ON
+        else
+          echo "Falling back to manual libserialport specification"
+          cmake .. -GNinja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DBUILD_CLI_ONLY=ON \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_VERBOSE_MAKEFILE=ON \
+            -DLIBSERIALPORT_LIBRARIES="$(brew --prefix)/lib/libserialport.dylib" \
+            -DLIBSERIALPORT_INCLUDE_DIRS="$(brew --prefix)/include" \
+            -DLIBSERIALPORT_FOUND=TRUE
+        fi
+    
+    - name: Build CLI
+      run: |
+        cd build-cli
+        ninja -v budc_cli
+    
+    - name: Configure CMake (GUI) 
+      run: |
+        mkdir build-gui
+        cd build-gui
+        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+        cmake .. -GNinja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+    
+    - name: Build GUI
+      run: |
+        cd build-gui
+        ninja budc_gui
+    
+    - name: Prepare artifacts
+      run: |
+        mkdir -p artifacts/macos-x64
+        cp build-cli/budc_cli artifacts/macos-x64/
+        cp build-gui/budc_gui artifacts/macos-x64/
+        chmod +x artifacts/macos-x64/*
+        ls -la artifacts/macos-x64/
+        file artifacts/macos-x64/*
+        artifacts/macos-x64/budc_cli --help || echo "CLI help test failed"
+    
+    - name: Upload macOS artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-x64
+        path: artifacts/macos-x64/
+        retention-days: 30
+
+  debian-package:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Debian package
+      run: |
+        docker build --output type=local,dest=./deb-output -f Dockerfile.deb .
+    
+    - name: Verify Debian package
+      run: |
+        echo "=== Debian package build results ==="
+        find ./deb-output -name "*.deb" -ls || echo "No .deb files found"
+        if ls ./deb-output/*.deb 1> /dev/null 2>&1; then
+          echo "Debian package(s) found:"
+          ls -la ./deb-output/*.deb
+        else
+          echo "Error: No Debian packages were created"
+          echo "Contents of deb-output:"
+          ls -la ./deb-output/ || echo "deb-output directory is empty or missing"
+          exit 1
+        fi
+    
+    - name: Upload Debian package
+      uses: actions/upload-artifact@v4
+      with:
+        name: debian-package
+        path: deb-output/*.deb
+        retention-days: 30
+
+  release:
+    needs: [docker-builds, macos-build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: release-artifacts
+    
+    - name: Prepare release assets
+      run: |
+        cd release-artifacts
+        
+        # Create archives for each platform
+        if [ -d "linux-x64" ]; then
+          tar -czf budc-controller-linux-x64.tar.gz -C linux-x64 .
+        fi
+        
+        if [ -d "windows-x64" ]; then
+          # Use zip for Windows for better native compatibility.
+          # The command cds into the directory to avoid including the parent folder in the zip.
+          (cd windows-x64 && zip -r ../budc-controller-windows-x64.zip .)
+        fi
+        
+        if [ -d "macos-x64" ]; then
+          tar -czf budc-controller-macos-x64.tar.gz -C macos-x64 .
+        fi
+        
+        # Move any debian packages
+        if [ -d "debian-package" ]; then
+          mv debian-package/*.deb ./ 2>/dev/null || echo "No debian packages found"
+        fi
+        
+        echo "=== Release assets prepared ==="
+        ls -la
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          release-artifacts/*.tar.gz
+          release-artifacts/*.zip
+          release-artifacts/*.deb
+        body: |
+          ## BUDC Controller Release
+          
+          Cross-platform controller for BUC/BUDC devices.
+          
+          **Downloads:**
+          - Linux x64: budc-controller-linux-x64.tar.gz
+          - Windows x64: budc-controller-windows-x64.zip
+          - macOS x64: budc-controller-macos-x64.tar.gz
+          - Debian Package: .deb file (if available)
+          
+          **Usage:**
+          Extract and run budc_gui for GUI or budc_cli for command line.
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-builds:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Test Docker build
+      run: |
+        docker build --target linux-static .
+    
+    - name: Test CLI compilation
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake ninja-build pkg-config libserialport-dev
+        mkdir test-build && cd test-build
+        cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_CLI_ONLY=ON
+        ninja budc_cli
+        ./budc_cli --help
