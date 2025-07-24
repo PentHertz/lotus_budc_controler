@@ -50,16 +50,18 @@ git clone https://github.com/PentHertz/lotus_budc_controler.git
 cd lotus_budc_controller
 ```
 
-### ⚙️ Configure with CMake
-
-```bash
-cmake -S . -B build
-```
-
 ### 🛠️ Build the project
 
 ```bash
-cmake --build build
+mkdir build && cd build
+cmake ..
+make 
+```
+
+And you can install it running the following command:
+
+```
+make install
 ```
 
 On Windows with Visual Studio:
@@ -83,6 +85,8 @@ The CLI is used for sending single or scripted commands over a specified serial 
 ```bash
 ./build/src/budc_cli --list
 ```
+
+If you have installed it through make, you can directly use the `budc_gui` command line.
 
 **Show help and available commands:**
 
