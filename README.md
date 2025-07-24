@@ -46,7 +46,7 @@ The project uses CMake's `FetchContent` to automatically download and build:
 ### 🧬 Clone the repository
 
 ```bash
-git clone https://github.com/Penthertz/lotus_budc_controller.git
+git clone https://github.com/PentHertz/lotus_budc_controler.git
 cd lotus_budc_controller
 ```
 
